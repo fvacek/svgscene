@@ -1,0 +1,3 @@
+[submodule "necrolog"]
+	path = necrolog
+	url = git@github.com:fvacek/necrolog.git
