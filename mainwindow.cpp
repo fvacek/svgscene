@@ -31,6 +31,7 @@ void MainWindow::openFile(const QString &fn)
 		return;
 	QFile f(file_name);
 	if(f.open(QFile::ReadOnly)) {
+		m_scene->clear();
 		QXmlStreamReader rd(&f);
 		SvgHandler h(m_scene);
 		h.load(&rd);
