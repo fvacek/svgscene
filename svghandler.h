@@ -10,6 +10,7 @@ class QXmlStreamAttributes;
 class QGraphicsScene;
 class QGraphicsItem;
 class QGraphicsSimpleTextItem;
+class QGraphicsTextItem;
 class QAbstractGraphicsShapeItem;
 //class QGraphicsItemGroup;
 
@@ -27,7 +28,9 @@ private:
 
 	void setTransform(QGraphicsItem *it, const QString &str_val);
 	void setStyle(QAbstractGraphicsShapeItem *it, const CssAttributes &attributes);
+	void setTextStyle(QFont &font, const CssAttributes &attributes);
 	void setTextStyle(QGraphicsSimpleTextItem *text, const CssAttributes &attributes);
+	void setTextStyle(QGraphicsTextItem *text, const CssAttributes &attributes);
 
 	bool startElement();
 	void addItem(QGraphicsItem *it);

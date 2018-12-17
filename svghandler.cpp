@@ -956,6 +956,10 @@ void SvgHandler::parse()
 				if(!text.isEmpty())
 					text += '\n';
 				text_item->setPlainText(text + m_xml->text());
+				//nInfo() << text_item->toPlainText();
+			}
+			else {
+				//nWarning() << "top:" << m_topLevelItem << (m_topLevelItem? typeid (*m_topLevelItem).name(): "NULL");
 			}
 			break;
 		}
@@ -996,18 +1000,21 @@ bool SvgHandler::startElement()
 			qreal y = el.xmlAttributes.value(QStringLiteral("y")).toDouble();
 			qreal w = el.xmlAttributes.value(QStringLiteral("width")).toDouble();
 			qreal h = el.xmlAttributes.value(QStringLiteral("height")).toDouble();
-			if(QGraphicsTextItem *sitem = dynamic_cast<QGraphicsTextItem*>(m_topLevelItem)) {
-				sitem->setPos(x, y);
-				sitem->setTextWidth(w);
+			if(QGraphicsTextItem *text_item = dynamic_cast<QGraphicsTextItem*>(m_topLevelItem)) {
+				QTransform t;
+				t.translate(x, y);
+				text_item->setTransform(t, true);
+				text_item->setTextWidth(w);
+				return false;
 			}
 			else {
-				QGraphicsRectItem *titem = new QGraphicsRectItem();
-				titem->setRect(QRectF(x, y, w, h));
-				setStyle(titem, el.styleAttributes);
-				setTransform(titem, el.xmlAttributes.value(QStringLiteral("transform")));
-				addItem(titem);
+				QGraphicsRectItem *item = new QGraphicsRectItem();
+				item->setRect(QRectF(x, y, w, h));
+				setStyle(item, el.styleAttributes);
+				setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+				addItem(item);
+				return true;
 			}
-			return true;
 		}
 		else if (el.name == QLatin1String("circle")) {
 			qreal cx = toDouble(el.xmlAttributes.value(QStringLiteral("cx")));
@@ -1079,7 +1086,8 @@ bool SvgHandler::startElement()
 		}
 		else if (el.name == QLatin1String("flowRoot")) {
 			QGraphicsTextItem *item = new QGraphicsTextItem();
-			//parseStyle(text, attributes);
+			//nWarning() << "FlowRoot:" << (QGraphicsItem*)item;
+			setTextStyle(item, el.styleAttributes);
 			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
 			addItem(item);
 			return true;
@@ -1125,44 +1133,100 @@ void SvgHandler::mergeCSSAttributes(CssAttributes &css_attributes, const QString
 
 void SvgHandler::setStyle(QAbstractGraphicsShapeItem *it, const CssAttributes &attributes)
 {
-	static auto FILL = QStringLiteral("fill");
-	QString fill = attributes.value(FILL);
+	QString fill = attributes.value(QStringLiteral("fill"));
 	if(fill.isEmpty() || fill == QLatin1String("none")) {
 		it->setBrush(Qt::NoBrush);
 	}
 	else {
-		static auto FILL_OPACITY = QStringLiteral("fill-opacity");
-		QString opacity = attributes.value(FILL_OPACITY);
+		QString opacity = attributes.value(QStringLiteral("fill-opacity"));
 		it->setBrush(parseColor(fill, opacity));
 	}
-	static auto STROKE = QStringLiteral("stroke");
-	QString stroke = attributes.value(STROKE);
+	QString stroke = attributes.value(QStringLiteral("stroke"));
 	if(stroke.isEmpty() || stroke == QLatin1String("none")) {
 		it->setPen(Qt::NoPen);
 	}
 	else {
-		static auto STROKE_WIDTH = QStringLiteral("stroke-width");
-		static auto STROKE_OPACITY = QStringLiteral("stroke-opacity");
-		QString opacity = attributes.value(STROKE_OPACITY);
+		QString opacity = attributes.value(QStringLiteral("stroke-opacity"));
 		QPen pen(parseColor(stroke, opacity));
-		pen.setWidthF(toDouble(attributes.value(STROKE_WIDTH)));
+		pen.setWidthF(toDouble(attributes.value(QStringLiteral("stroke-width"))));
+		QString linecap = attributes.value(QStringLiteral("stroke-linecap"));
+		if(linecap == QLatin1String("butt"))
+			pen.setCapStyle(Qt::FlatCap);
+		else if(linecap == QLatin1String("round"))
+			pen.setCapStyle(Qt::RoundCap);
+		else if(linecap == QLatin1String("square"))
+			pen.setCapStyle(Qt::SquareCap);
+		QString join = attributes.value(QStringLiteral("stroke-join"));
+		if(join == QLatin1String("round"))
+			pen.setJoinStyle(Qt::RoundJoin);
+		else if(join == QLatin1String("miter"))
+			pen.setJoinStyle(Qt::MiterJoin);
+		else if(join == QLatin1String("bevel"))
+			pen.setJoinStyle(Qt::BevelJoin);
 		it->setPen(pen);
+	}
+}
+
+void SvgHandler::setTextStyle(QFont &font, const SvgHandler::CssAttributes &attributes)
+{
+	QString font_size = attributes.value(QStringLiteral("font-size"));
+	if(!font_size.isEmpty()) {
+		if(font_size.endsWith(QLatin1String("px")))
+			font.setPixelSize((int)toDouble(font_size.mid(0, font_size.size() - 2)));
+		else if(font_size.endsWith(QLatin1String("pt")))
+			font.setPointSizeF(toDouble(font_size.mid(0, font_size.size() - 2)));
+	}
+	QString font_family = attributes.value(QStringLiteral("font-family"));
+	if(!font_family.isEmpty()) {
+		font.setFamily(font_family);
+	}
+	QString font_weight = attributes.value(QStringLiteral("font-weight"));
+	if(!font_weight.isEmpty()) {
+		if(font_weight == QLatin1String("thin"))
+			font.setWeight(QFont::Thin);
+		else if(font_weight == QLatin1String("light"))
+			font.setWeight(QFont::Light);
+		else if(font_weight == QLatin1String("normal"))
+			font.setWeight(QFont::Normal);
+		else if(font_weight == QLatin1String("medium"))
+			font.setWeight(QFont::Medium);
+		else if(font_weight == QLatin1String("bold"))
+			font.setWeight(QFont::Bold);
+		else if(font_weight == QLatin1String("black"))
+			font.setWeight(QFont::Black);
+	}
+	QString font_style = attributes.value(QStringLiteral("font-style"));
+	if(!font_style.isEmpty()) {
+		if(font_style == QLatin1String("normal"))
+			font.setStyle(QFont::StyleNormal);
+		else if(font_style == QLatin1String("italic"))
+			font.setStyle(QFont::StyleItalic);
+		else if(font_style == QLatin1String("oblique"))
+			font.setStyle(QFont::StyleOblique);
 	}
 }
 
 void SvgHandler::setTextStyle(QGraphicsSimpleTextItem *text, const CssAttributes &attributes)
 {
-	static auto FONT_SIZE = QStringLiteral("font-size");
-	QString font_size = attributes.value(FONT_SIZE);
-	if(!font_size.isEmpty()) {
-		QFont f = text->font();
-		//nInfo() << "F1:" << f.pixelSize() << "attr:" << font_size;
-		if(font_size.endsWith(QLatin1String("px")))
-			f.setPixelSize((int)toDouble(font_size.mid(0, font_size.size() - 2)));
-		else if(font_size.endsWith(QLatin1String("pt")))
-			f.setPointSizeF(toDouble(font_size.mid(0, font_size.size() - 2)));
-		//nInfo() << "F2:" << f.pixelSize();
-		text->setFont(f);
+	QFont f = text->font();
+	setTextStyle(f, attributes);
+	text->setFont(f);
+}
+
+void SvgHandler::setTextStyle(QGraphicsTextItem *text, const SvgHandler::CssAttributes &attributes)
+{
+	QFont f = text->font();
+	setTextStyle(f, attributes);
+	text->setFont(f);
+	static auto FILL = QStringLiteral("fill");
+	QString fill = attributes.value(FILL);
+	if(fill.isEmpty() || fill == QLatin1String("none")) {
+		//it->setBrush(Qt::NoBrush);
+	}
+	else {
+		static auto FILL_OPACITY = QStringLiteral("fill-opacity");
+		QString opacity = attributes.value(FILL_OPACITY);
+		text->setDefaultTextColor(parseColor(fill, opacity));
 	}
 }
 
@@ -1170,7 +1234,7 @@ void SvgHandler::addItem(QGraphicsItem *it)
 {
 	if(!m_topLevelItem)
 		return;
-	logSvgI() << "adding element:" << typeid (*it).name() << it;
+	logSvgI() << "adding element:" << it << typeid (*it).name();
 	if(QGraphicsItemGroup *grp = dynamic_cast<QGraphicsItemGroup*>(m_topLevelItem)) {
 		grp->addToGroup(it);
 	}
