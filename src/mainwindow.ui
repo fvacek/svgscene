@@ -6,8 +6,8 @@
    <rect>
     <x>0</x>
     <y>0</y>
-    <width>1027</width>
-    <height>719</height>
+    <width>1000</width>
+    <height>693</height>
    </rect>
   </property>
   <property name="windowTitle">
@@ -25,7 +25,7 @@
     <rect>
      <x>0</x>
      <y>0</y>
-     <width>1027</width>
+     <width>1000</width>
      <height>32</height>
     </rect>
    </property>
@@ -75,7 +75,7 @@
   <customwidget>
    <class>SvgGraphicsView</class>
    <extends>QGraphicsView</extends>
-   <header>svggraphicsview.h</header>
+   <header>src/svggraphicsview.h</header>
   </customwidget>
  </customwidgets>
  <resources/>

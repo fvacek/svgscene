@@ -25,24 +25,14 @@ DEFINES += QT_DEPRECATED_WARNINGS
 CONFIG += c++11
 
 SOURCES += \
-        main.cpp \
-        mainwindow.cpp \
-    svghandler.cpp \
     necrolog/libnecrolog/necrolog.cpp \
-    svggraphicsview.cpp
 
 HEADERS += \
-        mainwindow.h \
-    svghandler.h \
     necrolog/libnecrolog/necrolog.h \
-    necrolog/include/necrolog.h \
     necrolog/libnecrolog/necrologglobal.h \
-    log.h \
-    svggraphicsview.h
 
-FORMS += \
-        mainwindow.ui
-
+include(src/src.pri)
+    
 # Default rules for deployment.
 qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
