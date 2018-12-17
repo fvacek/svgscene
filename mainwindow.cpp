@@ -43,3 +43,8 @@ void MainWindow::on_action_Open_triggered()
 {
 	openFile();
 }
+
+void MainWindow::on_actionZoom_to_fit_triggered()
+{
+	ui->graphicsView->zoomToFit();
+}

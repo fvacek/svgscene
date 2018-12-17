@@ -1,15 +1,19 @@
-#include "svghandler.h"
+﻿#include "svghandler.h"
 
 #include "log.h"
 
 #include <QGraphicsItem>
+#include <QGraphicsTextItem>
 #include <QGraphicsScene>
 #include <QXmlStreamReader>
 #include <QStack>
 #include <QtMath>
+#include <QFontMetrics>
 
 #define logSvgI() nCInfo("svg")
 #define logSvgD() nCDebug("svg")
+
+//see: https://www.w3.org/TR/SVG11/
 
 // '0' is 0x30 and '9' is 0x39
 static inline bool isDigit(ushort ch)
@@ -90,7 +94,7 @@ static qreal toDouble(const QChar *&str)
 	}
 	return val;
 }
-/*
+
 static qreal toDouble(const QString &str, bool *ok = nullptr)
 {
 	const QChar *c = str.constData();
@@ -100,7 +104,7 @@ static qreal toDouble(const QString &str, bool *ok = nullptr)
 	}
 	return res;
 }
-*/
+/*
 static qreal toDouble(const QStringRef &str, bool *ok = nullptr)
 {
 	const QChar *c = str.constData();
@@ -110,7 +114,7 @@ static qreal toDouble(const QStringRef &str, bool *ok = nullptr)
 	}
 	return res;
 }
-
+*/
 static inline void parseNumbersArray(const QChar *&str, QVarLengthArray<qreal, 8> &points)
 {
 	while (str->isSpace())
@@ -243,11 +247,11 @@ bool qsvg_get_hex_rgb(const QChar *str, int len, QRgb *rgb)
 	return qsvg_get_hex_rgb(tmp, rgb);
 }
 
-static QColor parseColor(const QStringRef &color, const QStringRef &opacity)
+static QColor parseColor(const QString &color, const QString &opacity)
 {
 	QColor ret;
 	{
-		QStringRef color_str = color.trimmed();
+		QStringRef color_str = QStringRef(&color).trimmed();
 		if (color_str.isEmpty())
 			return ret;
 		switch(color_str.at(0).unicode()) {
@@ -912,30 +916,49 @@ void SvgHandler::load(QXmlStreamReader *data)
 
 void SvgHandler::parse()
 {
-	QStack<bool> item_creations;
 	m_xml->setNamespaceProcessing(false);
 	bool done = false;
 	while (!m_xml->atEnd() && !done) {
 		switch (m_xml->readNext()) {
 		case QXmlStreamReader::StartElement:
+		{
 			logSvgD() << "start element:" << m_xml->name();
-			if (startElement(m_xml->name().toString(), m_xml->attributes())) {
-				item_creations.push(true);
-			}
-			else {
-				item_creations.push(false);
+			SvgElement el(m_xml->name().toString());
+			el.xmlAttributes = parseXmlAttributes(m_xml->attributes());
+			if(!m_elementStack.isEmpty())
+				el.styleAttributes = m_elementStack.last().styleAttributes;
+			mergeCSSAttributes(el.styleAttributes, QStringLiteral("style"), el.xmlAttributes);
+			m_elementStack.push(el);
+			if (startElement()) {
+				m_elementStack.last().itemCreated = true;
 			}
 			break;
-		case QXmlStreamReader::EndElement: {
-			bool item_created = item_creations.pop();
-			logSvgD() << "end element:" << m_xml->name() << "item created:" << item_created;
-			if(item_created && m_topLevelItem)
+		}
+		case QXmlStreamReader::EndElement:
+		{
+			SvgElement svg_element = m_elementStack.pop();
+			logSvgD() << "end element:" << m_xml->name() << "item created:" << svg_element.itemCreated;
+			if(svg_element.itemCreated && m_topLevelItem)
 				m_topLevelItem = m_topLevelItem->parentItem();
 			break;
 		}
 		case QXmlStreamReader::Characters:
+		{
 			logSvgD() << "characters element:" << m_xml->text();
+			if(QGraphicsSimpleTextItem *text_item = dynamic_cast<QGraphicsSimpleTextItem*>(m_topLevelItem)) {
+				//QString text = text_item->text();
+				//if(!text.isEmpty())
+				//	text += '\n';
+				text_item->setText(m_xml->text().toString());
+			}
+			else if(QGraphicsTextItem *text_item = dynamic_cast<QGraphicsTextItem*>(m_topLevelItem)) {
+				QString text = text_item->toPlainText();
+				if(!text.isEmpty())
+					text += '\n';
+				text_item->setPlainText(text + m_xml->text());
+			}
 			break;
+		}
 		case QXmlStreamReader::ProcessingInstruction:
 			logSvgD() << "ProcessingInstruction:" << m_xml->processingInstructionTarget() << m_xml->processingInstructionData();
 			//processingInstruction(xml->processingInstructionTarget().toString(), xml->processingInstructionData().toString());
@@ -946,98 +969,131 @@ void SvgHandler::parse()
 	}
 }
 
-bool SvgHandler::startElement(const QString &element_name, const QXmlStreamAttributes &attributes)
+bool SvgHandler::startElement()
 {
+	const SvgElement &el = m_elementStack.last();
 	if (!m_topLevelItem) {
-		if (element_name == QLatin1String("svg")) {
+		if (el.name == QLatin1String("svg")) {
 			m_topLevelItem = new QGraphicsRectItem();
 			m_scene->addItem(m_topLevelItem);
 			return true;
 		}
 		else {
-			nWarning() << "unsupported root element:" << element_name;
+			nWarning() << "unsupported root element:" << el.name;
 		}
 	}
 	else {
-		if (element_name == QLatin1String("g")) {
+		if (el.name == QLatin1String("g")) {
 			auto *g = new QGraphicsRectItem();
-			parseStyle(g, attributes);
-			parseTransform(g, attributes);
+			setStyle(g, el.xmlAttributes);
+			setTransform(g, el.xmlAttributes.value(QStringLiteral("transform")));
 			addItem(g);
 			//g->setRotation(45);
 			return true;
 		}
-		else if (element_name == QLatin1String("rect")) {
-			qreal x = attributes.value(QLatin1String("x")).toDouble();
-			qreal y = attributes.value(QLatin1String("y")).toDouble();
-			qreal w = attributes.value(QLatin1String("width")).toDouble();
-			qreal h = attributes.value(QLatin1String("height")).toDouble();
-			QGraphicsRectItem *rect = new QGraphicsRectItem();
-			QStringRef style = attributes.value(QLatin1String("style"));
-			QVector<QStringRef> css = style.split(';', QString::SkipEmptyParts);
-			for(QStringRef ss : css) {
-				static auto FILL = QStringLiteral("fill:");
-				if(ss.startsWith(FILL)) {
-					rect->setBrush(QColor(ss.mid(FILL.length())));
-
-				}
+		else if (el.name == QLatin1String("rect")) {
+			qreal x = el.xmlAttributes.value(QStringLiteral("x")).toDouble();
+			qreal y = el.xmlAttributes.value(QStringLiteral("y")).toDouble();
+			qreal w = el.xmlAttributes.value(QStringLiteral("width")).toDouble();
+			qreal h = el.xmlAttributes.value(QStringLiteral("height")).toDouble();
+			if(QGraphicsTextItem *sitem = dynamic_cast<QGraphicsTextItem*>(m_topLevelItem)) {
+				sitem->setPos(x, y);
+				sitem->setTextWidth(w);
 			}
-			rect->setRect(QRectF(x, y, w, h));
-			parseStyle(rect, attributes);
-			parseTransform(rect, attributes);
-			addItem(rect);
+			else {
+				QGraphicsRectItem *titem = new QGraphicsRectItem();
+				titem->setRect(QRectF(x, y, w, h));
+				setStyle(titem, el.styleAttributes);
+				setTransform(titem, el.xmlAttributes.value(QStringLiteral("transform")));
+				addItem(titem);
+			}
 			return true;
 		}
-		else if (element_name == QLatin1String("circle")) {
-			qreal cx = attributes.value(QLatin1String("cx")).toDouble();
-			qreal cy = attributes.value(QLatin1String("cy")).toDouble();
-			qreal rx = attributes.value(QLatin1String("r")).toDouble();
+		else if (el.name == QLatin1String("circle")) {
+			qreal cx = toDouble(el.xmlAttributes.value(QStringLiteral("cx")));
+			qreal cy = toDouble(el.xmlAttributes.value(QStringLiteral("cy")));
+			qreal rx = toDouble(el.xmlAttributes.value(QStringLiteral("r")));
 			QRectF r(0, 0, 2*rx, 2*rx);
 			r.translate(cx - rx, cy - rx);
-			QGraphicsEllipseItem *elipse = new QGraphicsEllipseItem();
-			elipse->setRect(r);
-			parseStyle(elipse, attributes);
-			parseTransform(elipse, attributes);
-			addItem(elipse);
+			QGraphicsEllipseItem *item = new QGraphicsEllipseItem();
+			item->setRect(r);
+			setStyle(item, el.styleAttributes);
+			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+			addItem(item);
 			return true;
 		}
-		else if (element_name == QLatin1String("ellipse")) {
-			qreal cx = attributes.value(QLatin1String("cx")).toDouble();
-			qreal cy = attributes.value(QLatin1String("cy")).toDouble();
-			qreal rx = attributes.value(QLatin1String("rx")).toDouble();
-			qreal ry = attributes.value(QLatin1String("ry")).toDouble();
+		else if (el.name == QLatin1String("ellipse")) {
+			qreal cx = toDouble(el.xmlAttributes.value(QStringLiteral("cx")));
+			qreal cy = toDouble(el.xmlAttributes.value(QStringLiteral("cy")));
+			qreal rx = toDouble(el.xmlAttributes.value(QStringLiteral("rx")));
+			qreal ry = toDouble(el.xmlAttributes.value(QStringLiteral("ry")));
 			QRectF r(0, 0, 2*rx, 2*ry);
 			r.translate(cx - rx, cy - ry);
-			QGraphicsEllipseItem *elipse = new QGraphicsEllipseItem();
-			elipse->setRect(r);
-			parseStyle(elipse, attributes);
-			parseTransform(elipse, attributes);
-			addItem(elipse);
+			QGraphicsEllipseItem *item = new QGraphicsEllipseItem();
+			item->setRect(r);
+			setStyle(item, el.styleAttributes);
+			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+			addItem(item);
 			return true;
 		}
-		else if (element_name == QLatin1String("path")) {
-			QStringRef data = attributes.value(QLatin1String("d"));
+		else if (el.name == QLatin1String("path")) {
+			QGraphicsPathItem *item = new QGraphicsPathItem();
+			QString data = el.xmlAttributes.value(QStringLiteral("d"));
 			QPainterPath p;
-			p.setFillRule(Qt::WindingFill);
-			//XXX do error handling
-			parsePathDataFast(data, p);
-			QGraphicsPathItem *path = new QGraphicsPathItem();
-			path->setPath(p);
-			parseStyle(path, attributes);
-			parseTransform(path, attributes);
-			addItem(path);
+			parsePathDataFast(QStringRef(&data), p);
+			setStyle(item, el.styleAttributes);
+			static auto FILL_RULE = QStringLiteral("fill-rule");
+			if(el.styleAttributes.value(FILL_RULE) == QLatin1String("evenodd"))
+				p.setFillRule(Qt::OddEvenFill);
+			else
+				p.setFillRule(Qt::WindingFill);
+			item->setPath(p);
+			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+			addItem(item);
+			return true;
+		}
+		else if (el.name == QLatin1String("text")) {
+			//qreal x = attributes.value(QLatin1String("x")).toDouble();
+			//qreal y = attributes.value(QLatin1String("y")).toDouble();
+			QGraphicsRectItem *item = new QGraphicsRectItem();
+			//text->setPos(x, y);
+			setStyle(item, el.styleAttributes);
+			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+			addItem(item);
+			return true;
+		}
+		else if (el.name == QLatin1String("tspan")) {
+			qreal x = toDouble(el.xmlAttributes.value(QStringLiteral("x")));
+			qreal y = toDouble(el.xmlAttributes.value(QStringLiteral("y")));
+			QGraphicsSimpleTextItem *item = new QGraphicsSimpleTextItem();
+			//text->setPos(x, y);
+			setStyle(item, el.styleAttributes);
+			setTextStyle(item, el.styleAttributes);
+			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+			QFontMetricsF fm(item->font());
+			QTransform t;
+			t.translate(x, y - fm.ascent());
+			item->setTransform(t, true);
+			addItem(item);
+			return true;
+		}
+		else if (el.name == QLatin1String("flowRoot")) {
+			QGraphicsTextItem *item = new QGraphicsTextItem();
+			//parseStyle(text, attributes);
+			setTransform(item, el.xmlAttributes.value(QStringLiteral("transform")));
+			addItem(item);
 			return true;
 		}
 		else {
-			nWarning() << "unsupported element:" << element_name;
+			nWarning() << "unsupported element:" << el.name;
 		}
 	}
 	return false;
 }
 
-void SvgHandler::parseTransform(QGraphicsItem *it, const QXmlStreamAttributes &attributes)
+void SvgHandler::setTransform(QGraphicsItem *it, const QString &str_val)
 {
-	QStringRef transform = attributes.value(QLatin1String("transform"));
+	QStringRef transform(&str_val);
 	QMatrix mx = parseTransformationMatrix(transform.trimmed());
 	if(!mx.isIdentity()) {
 		QTransform t(mx);
@@ -1046,39 +1102,67 @@ void SvgHandler::parseTransform(QGraphicsItem *it, const QXmlStreamAttributes &a
 	}
 }
 
-void SvgHandler::parseStyle(QAbstractGraphicsShapeItem *it, const QXmlStreamAttributes &attributes)
+SvgHandler::XmlAttributes SvgHandler::parseXmlAttributes(const QXmlStreamAttributes &attributes)
 {
-	QStringRef style = attributes.value(QLatin1String("style"));
-	QVector<QStringRef> css = style.split(';', QString::SkipEmptyParts);
-	QMap<QStringRef, QStringRef> attrs;
-	for(QStringRef ss : css) {
+	XmlAttributes ret;
+	for (int i = 0; i < attributes.count(); ++i) {
+		const QXmlStreamAttribute &attr = attributes.at(i);
+		ret[attr.name().toString()] = attr.value().toString();
+	}
+	return ret;
+}
+
+void SvgHandler::mergeCSSAttributes(CssAttributes &css_attributes, const QString &attr_name, const XmlAttributes &xml_attributes)
+{
+	QStringList css = xml_attributes.value(attr_name).split(';', QString::SkipEmptyParts);
+	for(QString ss : css) {
 		int ix = ss.indexOf(':');
 		if(ix > 0) {
-			attrs[ss.mid(0, ix)] = ss.mid(ix + 1);
+			css_attributes[ss.mid(0, ix).trimmed()] = ss.mid(ix + 1).trimmed();
 		}
 	}
+}
+
+void SvgHandler::setStyle(QAbstractGraphicsShapeItem *it, const CssAttributes &attributes)
+{
 	static auto FILL = QStringLiteral("fill");
-	QStringRef fill = attrs.value(QStringRef(&FILL));
+	QString fill = attributes.value(FILL);
 	if(fill.isEmpty() || fill == QLatin1String("none")) {
 		it->setBrush(Qt::NoBrush);
 	}
 	else {
 		static auto FILL_OPACITY = QStringLiteral("fill-opacity");
-		QStringRef opacity = attrs.value(QStringRef(&FILL_OPACITY));
+		QString opacity = attributes.value(FILL_OPACITY);
 		it->setBrush(parseColor(fill, opacity));
 	}
 	static auto STROKE = QStringLiteral("stroke");
-	QStringRef stroke = attrs.value(QStringRef(&STROKE));
+	QString stroke = attributes.value(STROKE);
 	if(stroke.isEmpty() || stroke == QLatin1String("none")) {
 		it->setPen(Qt::NoPen);
 	}
 	else {
 		static auto STROKE_WIDTH = QStringLiteral("stroke-width");
 		static auto STROKE_OPACITY = QStringLiteral("stroke-opacity");
-		QStringRef opacity = attrs.value(QStringRef(&STROKE_OPACITY));
+		QString opacity = attributes.value(STROKE_OPACITY);
 		QPen pen(parseColor(stroke, opacity));
-		pen.setWidthF(toDouble(attrs.value(QStringRef(&STROKE_WIDTH))));
+		pen.setWidthF(toDouble(attributes.value(STROKE_WIDTH)));
 		it->setPen(pen);
+	}
+}
+
+void SvgHandler::setTextStyle(QGraphicsSimpleTextItem *text, const CssAttributes &attributes)
+{
+	static auto FONT_SIZE = QStringLiteral("font-size");
+	QString font_size = attributes.value(FONT_SIZE);
+	if(!font_size.isEmpty()) {
+		QFont f = text->font();
+		//nInfo() << "F1:" << f.pixelSize() << "attr:" << font_size;
+		if(font_size.endsWith(QLatin1String("px")))
+			f.setPixelSize((int)toDouble(font_size.mid(0, font_size.size() - 2)));
+		else if(font_size.endsWith(QLatin1String("pt")))
+			f.setPointSizeF(toDouble(font_size.mid(0, font_size.size() - 2)));
+		//nInfo() << "F2:" << f.pixelSize();
+		text->setFont(f);
 	}
 }
 
